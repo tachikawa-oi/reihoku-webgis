@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地理院地図 WebGIS - 透過度＆凡例切替機能追加</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <style>
+        body, margin { margin: 0; padding: 0; }
+        #map { width: 100vw; height: 100vh; }
+        
+        /* 共通パネルスタイル */
+        .panel { position: absolute; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+        
+        /* 左上パネル（操作系） */
+        .panel.left { top: 20px; left: 60px; }
+        
+        /* 右上パネル（レイヤ設定・凡例） */
+        .panel.right { 
+            top: 130px; right: 10px; background: rgba(255,255,255,0.95); 
+            padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); 
+            font: 13px sans-serif; max-height: calc(100vh - 150px); overflow-y: auto; width: 220px; 
+        }
+
+        .btn, .file-wrap { padding: 10px 15px; background: #fff; border: 2px solid rgba(0,0,0,0.2); border-radius: 5px; cursor: pointer; font: bold 14px sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        .btn:hover { background: #f4f4f4; }
+        .file-wrap input { font-size: 12px; cursor: pointer; }
+        
+        /* 透過度スライダーのアイテム */
+        .op-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .op-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+        
+        /* 凡例のチェックボックス */
+        .legend label { display: block; margin-bottom: 5px; cursor: pointer; }
+
+        #drop-layer { display: none; position: absolute; inset: 0; background: rgba(0,85,255,0.2); border: 5px dashed #05f; z-index: 9999; justify-content: center; align-items: center; font: bold 32px sans-serif; color: #05f; pointer-events: none; }
+        .dam-lbl { background: rgba(255,255,255,0.95); border: 2px solid #05f; border-radius: 5px; padding: 6px; font: bold 12px sans-serif; text-align: center; color: #333; box-shadow: 0 3px 6px rgba(0,0,0,0.4); cursor: pointer; transition: 0.2s; }
+        .dam-lbl:hover { background: #e6f0ff; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+    <div id="drop-layer">ここにGeoJSONをドロップ</div>
+    
+    <div class="panel left">
+        <button id="locate-btn" class="btn">現在地を表示</button>
+        <label class="file-wrap">ローカルのGeoJSONを読込<br><input type="file" id="geo-input" accept=".geojson,.json"></label>
+    </div>
+    
+    <!-- 右パネル：透過度と凡例制御 -->
+    <div class="panel right">
+        <b style="border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:5px;">各レイヤの透過度設定</b>
+        <div id="op-list" style="margin-bottom:15px;"></div>
+        
+        <b style="border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:5px;">樹種ポリゴン 表示切替</b>
+        <div class="legend">
+            <label><input type="checkbox" class="tree-cb" value="スギ" checked> <span style="color:#32cd32">■</span> スギ</label>
+            <label><input type="checkbox" class="tree-cb" value="ヒノキ" checked> <span style="color:#006400">■</span> ヒノキ</label>
+            <label><input type="checkbox" class="tree-cb" value="マツ" checked> <span style="color:#1e90ff">■</span> マツ類</label>
+            <label><input type="checkbox" class="tree-cb" value="広葉樹" checked> <span style="color:#ff69b4">■</span> その他広葉樹</label>
+            <label><input type="checkbox" class="tree-cb" value="その他" checked> <span style="color:#808080">■</span> その他</label>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+    <script>
+        // 1. タイル生成と地図初期化
+        const tile = (url, attr, max = 18) => L.tileLayer(url, { attribution: attr, maxZoom: max, minZoom: 2 });
+        const baseLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', '地理院タイル');
+        const slopeLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png', '地理院タイル', 15);
+        const csLayer = tile('https://rinya-kochi.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png', '高知県CS');
+        
+        const map = L.map('map', { center: [33.75653, 133.55121], zoom: 13, layers: [baseLayer, csLayer] });
+        
+        // ★ 傾斜量図を背景（ベース）から外し、CS図と一緒にレイヤ（オーバーレイ）の選択肢に移動
+        const lc = L.control.layers(
+            { "標準地図": baseLayer }, 
+            { "高知県CS": csLayer, "傾斜量図": slopeLayer }, 
+            { collapsed: false }
+        ).addTo(map);
+
+        // --- ★ 各レイヤの透過度スライダーを動的追加する関数 ---
+        const addOpacitySlider = (layer, name) => {
+            const div = document.createElement('div');
+            div.className = 'op-item';
+            div.innerHTML = `<span title="${name}">${name}</span> <input type="range" min="0" max="1" step="0.1" value="1" style="width:80px;">`;
+            
+            div.querySelector('input').oninput = e => {
+                const v = parseFloat(e.target.value);
+                if (layer.setOpacity) layer.setOpacity(v); // 標準のタイルレイヤ等の場合
+                else if (layer.eachLayer) layer.eachLayer(l => {
+                    // GeoJSON等の図形レイヤの場合
+                    if (l.setStyle) l.setStyle({ opacity: v, fillOpacity: v * 0.6 });
+                });
+            };
+            document.getElementById('op-list').appendChild(div);
+        };
+
+        // 初期レイヤの透過度スライダーを登録
+        addOpacitySlider(csLayer, "高知県CS");
+        addOpacitySlider(slopeLayer, "傾斜量図");
+
+
+        // 2. 樹種ポリゴンの設定
+        
+        // ★ 現在チェックが入っている樹種のリスト（初期値は全て表示）
+        let activeTrees = ['スギ', 'ヒノキ', 'マツ', '広葉樹', 'その他'];
+        
+        const getPolyStyle = (props) => {
+            const sp = Object.values(props).join(' ');
+            
+            let type = 'その他';
+            let color = '#808080';
+            if (sp.includes('スギ')) { type = 'スギ'; color = '#32cd32'; }
+            else if (sp.includes('ヒノキ')) { type = 'ヒノキ'; color = '#006400'; }
+            else if (sp.includes('マツ')) { type = 'マツ'; color = '#1e90ff'; }
+            else if (sp.includes('広葉樹')) { type = '広葉樹'; color = '#ff69b4'; }
+
+            // ★ チェックが外れている樹種は「fill/strokeをfalse」にして非表示化する
+            if (!activeTrees.includes(type)) return { fill: false, stroke: false };
+
+            return { fill: true, fillColor: color, fillOpacity: 0.6, stroke: false };
+        };
+
+        const vStyles = new Proxy({}, { 
+            get: (t, p) => (typeof p === 'symbol' || p === 'then') ? undefined : (props) => getPolyStyle(props),
+            has: (t, p) => typeof p !== 'symbol'
+        });
+
+        const treeSpeciesLayer = L.vectorGrid.protobuf('https://rinya-kochi.geospatial.jp/2023/rinya/tile/tree_species/{z}/{x}/{y}.pbf', { 
+            attribution: '高知県 樹種ポリゴン', maxNativeZoom: 15, vectorTileLayerStyles: vStyles, interactive: true
+        });
+
+        treeSpeciesLayer.on('click', e => {
+            const info = Object.entries(e.layer.properties).map(([k,v]) => `${k}: ${v}`).join('<br>');
+            L.popup().setLatLng(e.latlng).setContent(`<div style='max-height:200px;overflow-y:auto;'><b>樹種情報:</b><br>${info}</div>`).openOn(map);
+            L.DomEvent.stop(e); 
+        });
+
+        lc.addOverlay(treeSpeciesLayer, "🌳 樹種ポリゴン");
+        addOpacitySlider(treeSpeciesLayer, "🌳 樹種ポリゴン");
+
+        // ★ 右パネルのチェックボックスが操作されたら表示リストを更新し、レイヤを再描画する
+        document.querySelectorAll('.tree-cb').forEach(cb => {
+            cb.addEventListener('change', e => {
+                if (e.target.checked) activeTrees.push(e.target.value);
+                else activeTrees = activeTrees.filter(v => v !== e.target.value);
+                
+                // 再描画を実行して変更を反映
+                treeSpeciesLayer.redraw();
+            });
+        });
+
+
+        // 3. GeoJSON読み込み共通処理
+        const loadJSON = file => {
+            if (!file || !file.name.match(/\.(geo)?json$/i)) return alert("GeoJSONを指定してください。");
+            const r = new FileReader();
+            r.onload = e => {
+                try {
+                    const l = L.geoJSON(JSON.parse(e.target.result), {
+                        onEachFeature: (f, layer) => f.properties && layer.bindPopup(
+                            `<div style='max-height:200px;overflow-y:auto;'><b>情報:</b><br>${Object.entries(f.properties).map(([k,v])=>`${k}: ${v}`).join('<br>')}</div>`
+                        )
+                    }).addTo(map);
+                    lc.addOverlay(l, `📁 ${file.name}`);
+                    addOpacitySlider(l, `📁 ${file.name}`); // 読み込んだデータも透過度調整の対象に追加
+                    map.fitBounds(l.getBounds());
+                } catch(err) { alert("読込エラー: " + err.message); }
+            };
+            r.readAsText(file);
+        };
+
+        document.getElementById('geo-input').onchange = e => { loadJSON(e.target.files[0]); e.target.value = ''; };
+        const dl = document.getElementById('drop-layer');
+        ['dragover', 'dragleave', 'drop'].forEach(ev => {
+            window.addEventListener(ev, e => {
+                e.preventDefault();
+                dl.style.display = ev === 'dragover' ? 'flex' : (!e.clientX && !e.clientY || ev === 'drop') ? 'none' : dl.style.display;
+                if (ev === 'drop' && e.dataTransfer.files) Array.from(e.dataTransfer.files).forEach(loadJSON);
+            });
+        });
+
+
+        // 4. マップ機能 (クリック座標、早明浦ダム、現在地)
+        map.on('click', e => L.popup().setLatLng(e.latlng).setContent(`<b>座標</b><br>緯度: ${e.latlng.lat.toFixed(5)}<br>経度: ${e.latlng.lng.toFixed(5)}`).openOn(map));
+        const damIcon = L.divIcon({ className: '', html: `<div class="dam-lbl">早明浦ダム<br><u style="color:#05f;">データを見る</u></div>`, iconSize:[120,45], iconAnchor:[60,22] });
+        lc.addOverlay(L.marker([33.75653, 133.55121], { icon: damIcon }).on('click', () => window.open('https://www1.river.go.jp/search/data-view/1368080700010/DA01?from=2026-10-30&to=2026-11-05', '_blank')).addTo(map), "📌 早明浦ダム");
+
+        let locM, locC;
+        map.on('locationfound', e => {
+            if (locM) { map.removeLayer(locM); map.removeLayer(locC); }
+            locM = L.marker(e.latlng).addTo(map).bindPopup(`現在地<br>誤差: 約${Math.floor(e.accuracy)}m`).openPopup();
+            locC = L.circle(e.latlng, { radius: e.accuracy, color: '#05f', fillColor: '#05f', fillOpacity: 0.2 }).addTo(map);
+        }).on('locationerror', () => alert("位置取得失敗"));
+        document.getElementById('locate-btn').onclick = () => map.locate({ setView: true, maxZoom: 16 });
+    </script>
+</body>
+</html>
