@@ -2,63 +2,57 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地理院地図 WebGIS - 透過度＆凡例切替機能追加</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>地理院地図 WebGIS - 縮尺入力機能追加版</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <style>
-        body, margin { margin: 0; padding: 0; }
+        body, margin { margin: 0; padding: 0; overflow: hidden; }
         #map { width: 100vw; height: 100vh; }
         
-        /* 共通パネルスタイル */
-        .panel { position: absolute; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
-        
-        /* 左上パネル（操作系） */
-        .panel.left { top: 20px; left: 60px; }
-        
-        /* 右上パネル（レイヤ設定・凡例） */
-        .panel.right { 
-            top: 130px; right: 10px; background: rgba(255,255,255,0.95); 
-            padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); 
-            font: 13px sans-serif; max-height: calc(100vh - 150px); overflow-y: auto; width: 220px; 
+        .toolbar { position: absolute; top: 15px; left: 15px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+        .tool-btn { 
+            width: 44px; height: 44px; background: rgba(255,255,255,0.95); 
+            border: 2px solid rgba(0,0,0,0.2); border-radius: 8px; cursor: pointer; 
+            font-size: 20px; display: flex; justify-content: center; align-items: center; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3); padding: 0; margin: 0; color: #333;
         }
+        .tool-btn:hover { background: #f4f4f4; }
+        .tool-btn input { display: none; }
 
-        .btn, .file-wrap { padding: 10px 15px; background: #fff; border: 2px solid rgba(0,0,0,0.2); border-radius: 5px; cursor: pointer; font: bold 14px sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
-        .btn:hover { background: #f4f4f4; }
-        .file-wrap input { font-size: 12px; cursor: pointer; }
+        .custom-layer-control {
+            background: rgba(255,255,255,0.95); border: 2px solid rgba(0,0,0,0.2); 
+            border-radius: 8px; color: #333; font-family: sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+        .clc-toggle { width: 44px; height: 44px; display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 20px; }
+        .clc-toggle:hover { background: #f4f4f4; border-radius: 8px; }
+        .clc-panel { display: none; padding: 15px; max-height: 75vh; overflow-y: auto; width: 240px; position: relative; }
+        .clc-panel.active { display: block; }
+        .clc-close { position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 18px; cursor: pointer; color: #666; padding: 0; }
+        .clc-section { margin-bottom: 15px; }
+        .clc-title { font-weight: bold; font-size: 14px; margin-bottom: 10px; display: block; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
         
-        /* 透過度スライダーのアイテム */
-        .op-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-        .op-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+        .layer-item { margin-bottom: 12px; font-size: 14px; }
+        .layer-header label { display: flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; font-weight: bold; }
+        .layer-details { margin-top: 5px; padding-left: 26px; font-size: 12px; }
+        .layer-details summary { cursor: pointer; outline: none; margin-bottom: 5px; color: #555; }
+        .op-slider { width: 100%; margin: 5px 0; }
         
-        /* 凡例のチェックボックス */
-        .legend label { display: block; margin-bottom: 5px; cursor: pointer; }
+        .legend-list { border-top: 1px dashed #ccc; margin-top: 5px; padding-top: 5px; }
+        .legend-list label, .legend-list div { display: flex; align-items: center; gap: 5px; cursor: pointer; margin-bottom: 4px; font-size: 13px;}
 
-        #drop-layer { display: none; position: absolute; inset: 0; background: rgba(0,85,255,0.2); border: 5px dashed #05f; z-index: 9999; justify-content: center; align-items: center; font: bold 32px sans-serif; color: #05f; pointer-events: none; }
+        #drop-layer { display: none; position: absolute; inset: 0; background: rgba(0,85,255,0.2); border: 5px dashed #05f; z-index: 9999; justify-content: center; align-items: center; font: bold 24px sans-serif; color: #05f; pointer-events: none; text-align: center; }
         .dam-lbl { background: rgba(255,255,255,0.95); border: 2px solid #05f; border-radius: 5px; padding: 6px; font: bold 12px sans-serif; text-align: center; color: #333; box-shadow: 0 3px 6px rgba(0,0,0,0.4); cursor: pointer; transition: 0.2s; }
         .dam-lbl:hover { background: #e6f0ff; transform: scale(1.05); }
     </style>
 </head>
 <body>
-    <div id="drop-layer">ここにGeoJSONをドロップ</div>
+    <div id="drop-layer">GeoJSONをドロップ</div>
     
-    <div class="panel left">
-        <button id="locate-btn" class="btn">現在地を表示</button>
-        <label class="file-wrap">ローカルのGeoJSONを読込<br><input type="file" id="geo-input" accept=".geojson,.json"></label>
-    </div>
-    
-    <!-- 右パネル：透過度と凡例制御 -->
-    <div class="panel right">
-        <b style="border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:5px;">各レイヤの透過度設定</b>
-        <div id="op-list" style="margin-bottom:15px;"></div>
-        
-        <b style="border-bottom:1px solid #ccc; padding-bottom:5px; margin-bottom:5px;">樹種ポリゴン 表示切替</b>
-        <div class="legend">
-            <label><input type="checkbox" class="tree-cb" value="スギ" checked> <span style="color:#32cd32">■</span> スギ</label>
-            <label><input type="checkbox" class="tree-cb" value="ヒノキ" checked> <span style="color:#006400">■</span> ヒノキ</label>
-            <label><input type="checkbox" class="tree-cb" value="マツ" checked> <span style="color:#1e90ff">■</span> マツ類</label>
-            <label><input type="checkbox" class="tree-cb" value="広葉樹" checked> <span style="color:#ff69b4">■</span> その他広葉樹</label>
-            <label><input type="checkbox" class="tree-cb" value="その他" checked> <span style="color:#808080">■</span> その他</label>
-        </div>
+    <div class="toolbar">
+        <button id="btn-locate" class="tool-btn" title="現在地を表示">📍</button>
+        <label class="tool-btn" title="GeoJSONを読込">
+            <input type="file" id="geo-input" accept=".geojson,.json">📂
+        </label>
     </div>
     
     <div id="map"></div>
@@ -66,95 +60,280 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
     <script>
-        // 1. タイル生成と地図初期化
-        const tile = (url, attr, max = 18) => L.tileLayer(url, { attribution: attr, maxZoom: max, minZoom: 2 });
-        const baseLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', '地理院タイル');
-        const slopeLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png', '地理院タイル', 15);
-        const csLayer = tile('https://rinya-kochi.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png', '高知県CS');
-        
-        const map = L.map('map', { center: [33.75653, 133.55121], zoom: 13, layers: [baseLayer, csLayer] });
-        
-        // ★ 傾斜量図を背景（ベース）から外し、CS図と一緒にレイヤ（オーバーレイ）の選択肢に移動
-        const lc = L.control.layers(
-            { "標準地図": baseLayer }, 
-            { "高知県CS": csLayer, "傾斜量図": slopeLayer }, 
-            { collapsed: false }
-        ).addTo(map);
+        // --- グローバル変数・操作関数 ---
+        window.layerRegistry = {}; 
+        window.activeTrees = ['スギ', 'ヒノキ', 'マツ', '広葉樹', 'その他']; 
 
-        // --- ★ 各レイヤの透過度スライダーを動的追加する関数 ---
-        const addOpacitySlider = (layer, name) => {
-            const div = document.createElement('div');
-            div.className = 'op-item';
-            div.innerHTML = `<span title="${name}">${name}</span> <input type="range" min="0" max="1" step="0.1" value="1" style="width:80px;">`;
-            
-            div.querySelector('input').oninput = e => {
-                const v = parseFloat(e.target.value);
-                if (layer.setOpacity) layer.setOpacity(v); // 標準のタイルレイヤ等の場合
-                else if (layer.eachLayer) layer.eachLayer(l => {
-                    // GeoJSON等の図形レイヤの場合
-                    if (l.setStyle) l.setStyle({ opacity: v, fillOpacity: v * 0.6 });
+        window.toggleLayer = (cb, id, isBase) => {
+            const l = window.layerRegistry[id];
+            if (isBase) {
+                document.querySelectorAll('input[name="basemap"]').forEach(r => {
+                    if (r !== cb && map.hasLayer(window.layerRegistry[r.value])) map.removeLayer(window.layerRegistry[r.value]);
                 });
-            };
-            document.getElementById('op-list').appendChild(div);
+                if (cb.checked) map.addLayer(l);
+            } else {
+                if (cb.checked) map.addLayer(l);
+                else map.removeLayer(l);
+            }
         };
 
-        // 初期レイヤの透過度スライダーを登録
-        addOpacitySlider(csLayer, "高知県CS");
-        addOpacitySlider(slopeLayer, "傾斜量図");
+        window.updateOpacity = (id, val) => {
+            const l = window.layerRegistry[id];
+            if (l.setOpacity) l.setOpacity(val);
+            else if (l.eachLayer) l.eachLayer(lyr => { if(lyr.setStyle) lyr.setStyle({ opacity: val, fillOpacity: val * 0.6 }) });
+        };
 
+        window.toggleTree = (type, isChecked) => {
+            if (isChecked) window.activeTrees.push(type);
+            else window.activeTrees = window.activeTrees.filter(v => v !== type);
+            window.layerRegistry['tree_layer'].redraw(); 
+        };
 
-        // 2. 樹種ポリゴンの設定
+        // --- 1. 地図の初期化とコントロール ---
+        const tile = (url, attr, max = 18) => L.tileLayer(url, { attribution: attr, maxZoom: max, minZoom: 2 });
+        const baseLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', '地理院タイル');
         
-        // ★ 現在チェックが入っている樹種のリスト（初期値は全て表示）
-        let activeTrees = ['スギ', 'ヒノキ', 'マツ', '広葉樹', 'その他'];
+        // 【重要変更】 zoomSnap: 0 を追加し、無段階で正確な縮尺ズームを許可する
+        const map = L.map('map', { center: [33.75653, 133.55121], zoom: 13, layers: [baseLayer], zoomControl: false, zoomSnap: 0 });
+        L.control.zoom({ position: 'bottomright' }).addTo(map); 
+
+        // スケールバー（左下）
+        L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+
+        // 【変更】数値縮尺表記 を「入力フォーム（Input）」に変更
+        const NumericScale = L.Control.extend({
+            options: { position: 'bottomleft' },
+            onAdd: function(map) {
+                this._div = L.DomUtil.create('div', 'leaflet-control-scale');
+                this._div.style.background = 'rgba(255,255,255,0.9)';
+                this._div.style.padding = '4px 8px';
+                this._div.style.border = '2px solid rgba(0,0,0,0.2)';
+                this._div.style.borderRadius = '4px';
+                this._div.style.fontSize = '13px';
+                this._div.style.fontWeight = 'bold';
+                this._div.style.color = '#333';
+                this._div.style.marginBottom = '2px';
+                this._div.style.display = 'flex';
+                this._div.style.alignItems = 'center';
+                this._div.style.gap = '4px';
+                
+                // コントロール上のクリック・スクロールが地図に伝わらないようにブロック
+                L.DomEvent.disableClickPropagation(this._div);
+                L.DomEvent.disableScrollPropagation(this._div);
+
+                this._div.innerHTML = `縮尺 1: <input type="text" id="scale-input" title="数値を入力してEnter" style="width: 70px; text-align: right; border: 1px solid #ccc; border-radius: 3px; padding: 3px; font-weight: bold; font-size: 13px;">`;
+                
+                this._input = this._div.querySelector('#scale-input');
+                
+                // 入力された数値からズームレベルを逆算して反映する関数
+                const applyScale = () => {
+                    let val = this._input.value.replace(/,/g, ''); // カンマを除去
+                    let targetScale = parseInt(val, 10);
+                    
+                    if (!isNaN(targetScale) && targetScale > 0) {
+                        const lat = map.getCenter().lat;
+                        // 縮尺計算の定数 (画面DPI96想定)
+                        const C = 156543.03392 * Math.cos(lat * Math.PI / 180) * 3779.52;
+                        // 式: scale = C / (2^zoom)  =>  zoom = log2(C / scale)
+                        const targetZoom = Math.log2(C / targetScale);
+                        map.setZoom(targetZoom);
+                        this._input.blur(); // フォーカスを外して数値を自動整形
+                    } else {
+                        this._update(true); // エラー時は現在の縮尺に戻す
+                    }
+                };
+
+                // 入力時にカンマを外して入力しやすくする
+                this._input.addEventListener('focus', () => {
+                    this._input.value = this._input.value.replace(/,/g, '');
+                    this._input.select();
+                });
+                
+                // Enterキーで縮尺変更を実行
+                this._input.addEventListener('keydown', e => {
+                    if (e.key === 'Enter') applyScale();
+                });
+                
+                // フォーカスが外れたらカンマ付きに整形し直す
+                this._input.addEventListener('blur', () => this._update(true));
+
+                // 地図が動いた時の更新
+                map.on('moveend', () => this._update(false));
+                this._update(true);
+                return this._div;
+            },
+            
+            // 縮尺の数値を計算してInputに反映
+            _update: function(force) {
+                // 入力中（フォーカスが当たっている時）は勝手に数値を書き換えない
+                if (!force && document.activeElement === this._input) return;
+                
+                const lat = map.getCenter().lat;
+                const zoom = map.getZoom();
+                const res = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+                const scale = Math.round(res * 3779.52);
+                
+                // 3桁カンマ区切りで表示
+                this._input.value = scale.toLocaleString();
+            }
+        });
+        map.addControl(new NumericScale());
+
+        // --- 2. カスタムレイヤパネル ---
+        const LayerControl = L.Control.extend({
+            options: { position: 'topright' },
+            onAdd: function() {
+                const div = L.DomUtil.create('div', 'custom-layer-control');
+                div.innerHTML = `
+                    <div class="clc-toggle" id="clc-toggle" title="レイヤ一覧">📚</div>
+                    <div class="clc-panel" id="clc-panel">
+                        <button class="clc-close" id="clc-close">✖</button>
+                        <div class="clc-section">
+                            <span class="clc-title">背景地図</span>
+                            <div id="list-base"></div>
+                        </div>
+                        <div class="clc-section">
+                            <span class="clc-title">レイヤ</span>
+                            <div id="list-overlay"></div>
+                        </div>
+                    </div>
+                `;
+                L.DomEvent.disableClickPropagation(div);
+                L.DomEvent.disableScrollPropagation(div);
+                
+                setTimeout(() => {
+                    const tog = document.getElementById('clc-toggle');
+                    const pnl = document.getElementById('clc-panel');
+                    const cls = document.getElementById('clc-close');
+                    tog.onclick = () => { pnl.classList.add('active'); tog.style.display = 'none'; };
+                    cls.onclick = () => { pnl.classList.remove('active'); tog.style.display = 'flex'; };
+                }, 0);
+                return div;
+            }
+        });
+        map.addControl(new LayerControl());
+
+        let layerIdCounter = 0;
+        const addCustomLayer = (layer, name, type = 'overlay', options = {}) => {
+            const id = options.id || ('layer_' + (layerIdCounter++));
+            window.layerRegistry[id] = layer;
+            
+            const isBase = type === 'base';
+            const checked = map.hasLayer(layer) ? 'checked' : '';
+            
+            const div = document.createElement('div');
+            div.className = 'layer-item';
+            
+            let html = `
+                <div class="layer-header">
+                    <label><input type="${isBase ? 'radio' : 'checkbox'}" name="${isBase ? 'basemap' : id}" value="${id}" ${checked} onchange="toggleLayer(this, '${id}', ${isBase})"> ${name}</label>
+                </div>
+            `;
+            
+            if (options.hasOpacity || options.isTree || options.isSlope) {
+                html += `<details class="layer-details"><summary>設定・凡例</summary>`;
+                if (options.hasOpacity) {
+                    html += `<div style="margin:5px 0;">透過度: <input type="range" class="op-slider" min="0" max="1" step="0.1" value="1" oninput="updateOpacity('${id}', this.value)"></div>`;
+                }
+                if (options.isTree) {
+                    html += `<div class="legend-list">`;
+                    const legends = [{t:'スギ',c:'#32cd32'},{t:'ヒノキ',c:'#006400'},{t:'マツ',c:'#1e90ff'},{t:'広葉樹',c:'#ff69b4'},{t:'その他',c:'#808080'}];
+                    legends.forEach(l => { html += `<label><input type="checkbox" onchange="toggleTree('${l.t}', this.checked)" checked> <span style="color:${l.c}; font-size:16px;">■</span> ${l.t}</label>`; });
+                    html += `</div>`;
+                }
+                if (options.isSlope) {
+                    html += `<div class="legend-list">`;
+                    const slopeLegends = [
+                        {t:'0～5度',c:'#0000ff'}, {t:'5～10度',c:'#00a0a0'}, {t:'10～20度',c:'#90ee90'},
+                        {t:'20～30度',c:'#ffff00'}, {t:'30～40度',c:'#ff0000'}, {t:'40度以上',c:'#800000'}
+                    ];
+                    slopeLegends.forEach(l => { html += `<div><span style="color:${l.c}; font-size:16px;">■</span> ${l.t}</div>`; });
+                    html += `</div>`;
+                }
+                html += `</details>`;
+            }
+            
+            div.innerHTML = html;
+            document.getElementById(isBase ? 'list-base' : 'list-overlay').appendChild(div);
+        };
+
+        // --- 3. 白黒の傾斜量図をリアルタイムで色付け処理 ---
+        const ColoredSlopeLayer = L.TileLayer.extend({
+            createTile: function (coords, done) {
+                const tile = document.createElement('canvas');
+                const size = this.getTileSize();
+                tile.width = size.x; tile.height = size.y;
+                const ctx = tile.getContext('2d');
+                
+                const img = new Image();
+                img.crossOrigin = 'Anonymous';
+                img.src = this.getTileUrl(coords);
+                
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0);
+                    const imgData = ctx.getImageData(0, 0, size.x, size.y);
+                    const data = imgData.data;
+                    
+                    for (let i = 0; i < data.length; i += 4) {
+                        if (data[i+3] === 0) continue; 
+                        const v = data[i]; 
+                        
+                        if (v >= 241) { data[i]=0; data[i+1]=0; data[i+2]=255; }
+                        else if (v >= 226) { data[i]=0; data[i+1]=160; data[i+2]=160; }
+                        else if (v >= 198) { data[i]=144; data[i+1]=238; data[i+2]=144; }
+                        else if (v >= 170) { data[i]=255; data[i+1]=255; data[i+2]=0; }
+                        else if (v >= 141) { data[i]=255; data[i+1]=0; data[i+2]=0; }
+                        else { data[i]=128; data[i+1]=0; data[i+2]=0; }
+                    }
+                    ctx.putImageData(imgData, 0, 0);
+                    done(null, tile);
+                };
+                img.onerror = e => done(e, tile);
+                return tile;
+            }
+        });
+
+        // --- 4. 各レイヤの作成 ---
+        const csLayer = tile('https://rinya-kochi.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png', '高知県CS').addTo(map);
+        const slopeLayer = new ColoredSlopeLayer('https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png', { attribution: '地理院タイル', maxZoom: 15 });
         
         const getPolyStyle = (props) => {
             const sp = Object.values(props).join(' ');
-            
-            let type = 'その他';
-            let color = '#808080';
+            let type = 'その他', color = '#808080';
             if (sp.includes('スギ')) { type = 'スギ'; color = '#32cd32'; }
             else if (sp.includes('ヒノキ')) { type = 'ヒノキ'; color = '#006400'; }
             else if (sp.includes('マツ')) { type = 'マツ'; color = '#1e90ff'; }
             else if (sp.includes('広葉樹')) { type = '広葉樹'; color = '#ff69b4'; }
-
-            // ★ チェックが外れている樹種は「fill/strokeをfalse」にして非表示化する
-            if (!activeTrees.includes(type)) return { fill: false, stroke: false };
-
+            if (!window.activeTrees.includes(type)) return { fill: false, stroke: false };
             return { fill: true, fillColor: color, fillOpacity: 0.6, stroke: false };
         };
-
         const vStyles = new Proxy({}, { 
             get: (t, p) => (typeof p === 'symbol' || p === 'then') ? undefined : (props) => getPolyStyle(props),
             has: (t, p) => typeof p !== 'symbol'
         });
-
         const treeSpeciesLayer = L.vectorGrid.protobuf('https://rinya-kochi.geospatial.jp/2023/rinya/tile/tree_species/{z}/{x}/{y}.pbf', { 
             attribution: '高知県 樹種ポリゴン', maxNativeZoom: 15, vectorTileLayerStyles: vStyles, interactive: true
-        });
-
+        }).addTo(map);
         treeSpeciesLayer.on('click', e => {
             const info = Object.entries(e.layer.properties).map(([k,v]) => `${k}: ${v}`).join('<br>');
             L.popup().setLatLng(e.latlng).setContent(`<div style='max-height:200px;overflow-y:auto;'><b>樹種情報:</b><br>${info}</div>`).openOn(map);
             L.DomEvent.stop(e); 
         });
+        
+        const damIcon = L.divIcon({ className: '', html: `<div class="dam-lbl">早明浦ダム<br><u style="color:#05f;">データを見る</u></div>`, iconSize:[120,45], iconAnchor:[60,22] });
+        const damMarker = L.marker([33.75653, 133.55121], { icon: damIcon }).on('click', () => window.open('https://www1.river.go.jp/search/data-view/1368080700010/DA01?from=2026-10-30&to=2026-11-05', '_blank')).addTo(map);
 
-        lc.addOverlay(treeSpeciesLayer, "🌳 樹種ポリゴン");
-        addOpacitySlider(treeSpeciesLayer, "🌳 樹種ポリゴン");
+        // --- 5. パネルへの登録 ---
+        addCustomLayer(baseLayer, "標準地図", 'base');
+        const googleSat = tile('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', '&copy; Google');
+        addCustomLayer(googleSat, "Google 衛星画像", 'base');
 
-        // ★ 右パネルのチェックボックスが操作されたら表示リストを更新し、レイヤを再描画する
-        document.querySelectorAll('.tree-cb').forEach(cb => {
-            cb.addEventListener('change', e => {
-                if (e.target.checked) activeTrees.push(e.target.value);
-                else activeTrees = activeTrees.filter(v => v !== e.target.value);
-                
-                // 再描画を実行して変更を反映
-                treeSpeciesLayer.redraw();
-            });
-        });
+        addCustomLayer(damMarker, "📌 早明浦ダム", 'overlay');
+        addCustomLayer(treeSpeciesLayer, "🌳 樹種ポリゴン", 'overlay', { hasOpacity: true, isTree: true, id: 'tree_layer' });
+        addCustomLayer(slopeLayer, "傾斜量図 (カラー)", 'overlay', { hasOpacity: true, isSlope: true });
+        addCustomLayer(csLayer, "高知県CS立体図", 'overlay', { hasOpacity: true });
 
-
-        // 3. GeoJSON読み込み共通処理
+        // --- 6. GeoJSON読込 ---
         const loadJSON = file => {
             if (!file || !file.name.match(/\.(geo)?json$/i)) return alert("GeoJSONを指定してください。");
             const r = new FileReader();
@@ -165,8 +344,7 @@
                             `<div style='max-height:200px;overflow-y:auto;'><b>情報:</b><br>${Object.entries(f.properties).map(([k,v])=>`${k}: ${v}`).join('<br>')}</div>`
                         )
                     }).addTo(map);
-                    lc.addOverlay(l, `📁 ${file.name}`);
-                    addOpacitySlider(l, `📁 ${file.name}`); // 読み込んだデータも透過度調整の対象に追加
+                    addCustomLayer(l, `📁 ${file.name}`, 'overlay', { hasOpacity: true });
                     map.fitBounds(l.getBounds());
                 } catch(err) { alert("読込エラー: " + err.message); }
             };
@@ -183,19 +361,26 @@
             });
         });
 
-
-        // 4. マップ機能 (クリック座標、早明浦ダム、現在地)
-        map.on('click', e => L.popup().setLatLng(e.latlng).setContent(`<b>座標</b><br>緯度: ${e.latlng.lat.toFixed(5)}<br>経度: ${e.latlng.lng.toFixed(5)}`).openOn(map));
-        const damIcon = L.divIcon({ className: '', html: `<div class="dam-lbl">早明浦ダム<br><u style="color:#05f;">データを見る</u></div>`, iconSize:[120,45], iconAnchor:[60,22] });
-        lc.addOverlay(L.marker([33.75653, 133.55121], { icon: damIcon }).on('click', () => window.open('https://www1.river.go.jp/search/data-view/1368080700010/DA01?from=2026-10-30&to=2026-11-05', '_blank')).addTo(map), "📌 早明浦ダム");
+        // --- 7. 基本操作イベント ---
+        map.on('click', e => {
+            const pnl = document.getElementById('clc-panel');
+            const tog = document.getElementById('clc-toggle');
+            if (pnl && pnl.classList.contains('active')) {
+                pnl.classList.remove('active');
+                tog.style.display = 'flex';
+            } else {
+                L.popup().setLatLng(e.latlng).setContent(`<b>座標</b><br>緯度: ${e.latlng.lat.toFixed(5)}<br>経度: ${e.latlng.lng.toFixed(5)}`).openOn(map);
+            }
+        });
 
         let locM, locC;
         map.on('locationfound', e => {
             if (locM) { map.removeLayer(locM); map.removeLayer(locC); }
             locM = L.marker(e.latlng).addTo(map).bindPopup(`現在地<br>誤差: 約${Math.floor(e.accuracy)}m`).openPopup();
             locC = L.circle(e.latlng, { radius: e.accuracy, color: '#05f', fillColor: '#05f', fillOpacity: 0.2 }).addTo(map);
+            map.flyTo(e.latlng, 16);
         }).on('locationerror', () => alert("位置取得失敗"));
-        document.getElementById('locate-btn').onclick = () => map.locate({ setView: true, maxZoom: 16 });
+        document.getElementById('btn-locate').onclick = () => map.locate({ setView: false });
     </script>
 </body>
 </html>
