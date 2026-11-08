@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>地理院地図 WebGIS - 縮尺入力機能追加版</title>
+    <title>地理院地図 WebGIS - PMTiles登記所地図追加版</title>
+    
+    <!-- LeafletとMapLibreのCSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    
     <style>
         body, margin { margin: 0; padding: 0; overflow: hidden; }
         #map { width: 100vw; height: 100vh; }
@@ -57,8 +61,14 @@
     
     <div id="map"></div>
 
+    <!-- 各種ライブラリの読み込み -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+    <!-- PMTilesとMapLibreの読み込み -->
+    <script src="https://unpkg.com/pmtiles@3.0.6/dist/index.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js"></script>
+
     <script>
         // --- グローバル変数・操作関数 ---
         window.layerRegistry = {}; 
@@ -92,15 +102,13 @@
         // --- 1. 地図の初期化とコントロール ---
         const tile = (url, attr, max = 18) => L.tileLayer(url, { attribution: attr, maxZoom: max, minZoom: 2 });
         const baseLayer = tile('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', '地理院タイル');
-        
-        // 【重要変更】 zoomSnap: 0 を追加し、無段階で正確な縮尺ズームを許可する
         const map = L.map('map', { center: [33.75653, 133.55121], zoom: 13, layers: [baseLayer], zoomControl: false, zoomSnap: 0 });
         L.control.zoom({ position: 'bottomright' }).addTo(map); 
 
-        // スケールバー（左下）
+        // スケールバー
         L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
 
-        // 【変更】数値縮尺表記 を「入力フォーム（Input）」に変更
+        // 数値縮尺表記入力フォーム
         const NumericScale = L.Control.extend({
             options: { position: 'bottomleft' },
             onAdd: function(map) {
@@ -116,64 +124,39 @@
                 this._div.style.display = 'flex';
                 this._div.style.alignItems = 'center';
                 this._div.style.gap = '4px';
-                
-                // コントロール上のクリック・スクロールが地図に伝わらないようにブロック
                 L.DomEvent.disableClickPropagation(this._div);
                 L.DomEvent.disableScrollPropagation(this._div);
 
                 this._div.innerHTML = `縮尺 1: <input type="text" id="scale-input" title="数値を入力してEnter" style="width: 70px; text-align: right; border: 1px solid #ccc; border-radius: 3px; padding: 3px; font-weight: bold; font-size: 13px;">`;
-                
                 this._input = this._div.querySelector('#scale-input');
                 
-                // 入力された数値からズームレベルを逆算して反映する関数
                 const applyScale = () => {
-                    let val = this._input.value.replace(/,/g, ''); // カンマを除去
+                    let val = this._input.value.replace(/,/g, '');
                     let targetScale = parseInt(val, 10);
-                    
                     if (!isNaN(targetScale) && targetScale > 0) {
                         const lat = map.getCenter().lat;
-                        // 縮尺計算の定数 (画面DPI96想定)
                         const C = 156543.03392 * Math.cos(lat * Math.PI / 180) * 3779.52;
-                        // 式: scale = C / (2^zoom)  =>  zoom = log2(C / scale)
                         const targetZoom = Math.log2(C / targetScale);
                         map.setZoom(targetZoom);
-                        this._input.blur(); // フォーカスを外して数値を自動整形
+                        this._input.blur();
                     } else {
-                        this._update(true); // エラー時は現在の縮尺に戻す
+                        this._update(true); 
                     }
                 };
 
-                // 入力時にカンマを外して入力しやすくする
-                this._input.addEventListener('focus', () => {
-                    this._input.value = this._input.value.replace(/,/g, '');
-                    this._input.select();
-                });
-                
-                // Enterキーで縮尺変更を実行
-                this._input.addEventListener('keydown', e => {
-                    if (e.key === 'Enter') applyScale();
-                });
-                
-                // フォーカスが外れたらカンマ付きに整形し直す
+                this._input.addEventListener('focus', () => { this._input.value = this._input.value.replace(/,/g, ''); this._input.select(); });
+                this._input.addEventListener('keydown', e => { if (e.key === 'Enter') applyScale(); });
                 this._input.addEventListener('blur', () => this._update(true));
-
-                // 地図が動いた時の更新
                 map.on('moveend', () => this._update(false));
                 this._update(true);
                 return this._div;
             },
-            
-            // 縮尺の数値を計算してInputに反映
             _update: function(force) {
-                // 入力中（フォーカスが当たっている時）は勝手に数値を書き換えない
                 if (!force && document.activeElement === this._input) return;
-                
                 const lat = map.getCenter().lat;
                 const zoom = map.getZoom();
                 const res = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
                 const scale = Math.round(res * 3779.52);
-                
-                // 3桁カンマ区切りで表示
                 this._input.value = scale.toLocaleString();
             }
         });
@@ -200,7 +183,6 @@
                 `;
                 L.DomEvent.disableClickPropagation(div);
                 L.DomEvent.disableScrollPropagation(div);
-                
                 setTimeout(() => {
                     const tog = document.getElementById('clc-toggle');
                     const pnl = document.getElementById('clc-panel');
@@ -217,18 +199,13 @@
         const addCustomLayer = (layer, name, type = 'overlay', options = {}) => {
             const id = options.id || ('layer_' + (layerIdCounter++));
             window.layerRegistry[id] = layer;
-            
             const isBase = type === 'base';
             const checked = map.hasLayer(layer) ? 'checked' : '';
             
             const div = document.createElement('div');
             div.className = 'layer-item';
             
-            let html = `
-                <div class="layer-header">
-                    <label><input type="${isBase ? 'radio' : 'checkbox'}" name="${isBase ? 'basemap' : id}" value="${id}" ${checked} onchange="toggleLayer(this, '${id}', ${isBase})"> ${name}</label>
-                </div>
-            `;
+            let html = `<div class="layer-header"><label><input type="${isBase ? 'radio' : 'checkbox'}" name="${isBase ? 'basemap' : id}" value="${id}" ${checked} onchange="toggleLayer(this, '${id}', ${isBase})"> ${name}</label></div>`;
             
             if (options.hasOpacity || options.isTree || options.isSlope) {
                 html += `<details class="layer-details"><summary>設定・凡例</summary>`;
@@ -243,41 +220,36 @@
                 }
                 if (options.isSlope) {
                     html += `<div class="legend-list">`;
-                    const slopeLegends = [
-                        {t:'0～5度',c:'#0000ff'}, {t:'5～10度',c:'#00a0a0'}, {t:'10～20度',c:'#90ee90'},
-                        {t:'20～30度',c:'#ffff00'}, {t:'30～40度',c:'#ff0000'}, {t:'40度以上',c:'#800000'}
-                    ];
+                    const slopeLegends = [{t:'0～5度',c:'#0000ff'}, {t:'5～10度',c:'#00a0a0'}, {t:'10～20度',c:'#90ee90'},{t:'20～30度',c:'#ffff00'}, {t:'30～40度',c:'#ff0000'}, {t:'40度以上',c:'#800000'}];
                     slopeLegends.forEach(l => { html += `<div><span style="color:${l.c}; font-size:16px;">■</span> ${l.t}</div>`; });
                     html += `</div>`;
                 }
                 html += `</details>`;
             }
-            
             div.innerHTML = html;
             document.getElementById(isBase ? 'list-base' : 'list-overlay').appendChild(div);
         };
 
-        // --- 3. 白黒の傾斜量図をリアルタイムで色付け処理 ---
+
+        // --- 3. 各種レイヤの生成 ---
+
+        // 白黒の傾斜量図のカラー化
         const ColoredSlopeLayer = L.TileLayer.extend({
             createTile: function (coords, done) {
                 const tile = document.createElement('canvas');
                 const size = this.getTileSize();
                 tile.width = size.x; tile.height = size.y;
                 const ctx = tile.getContext('2d');
-                
                 const img = new Image();
                 img.crossOrigin = 'Anonymous';
                 img.src = this.getTileUrl(coords);
-                
                 img.onload = () => {
                     ctx.drawImage(img, 0, 0);
                     const imgData = ctx.getImageData(0, 0, size.x, size.y);
                     const data = imgData.data;
-                    
                     for (let i = 0; i < data.length; i += 4) {
                         if (data[i+3] === 0) continue; 
                         const v = data[i]; 
-                        
                         if (v >= 241) { data[i]=0; data[i+1]=0; data[i+2]=255; }
                         else if (v >= 226) { data[i]=0; data[i+1]=160; data[i+2]=160; }
                         else if (v >= 198) { data[i]=144; data[i+1]=238; data[i+2]=144; }
@@ -293,7 +265,7 @@
             }
         });
 
-        // --- 4. 各レイヤの作成 ---
+        // 既存レイヤ
         const csLayer = tile('https://rinya-kochi.geospatial.jp/2023/rinya/tile/csmap/{z}/{x}/{y}.png', '高知県CS').addTo(map);
         const slopeLayer = new ColoredSlopeLayer('https://cyberjapandata.gsi.go.jp/xyz/slopemap/{z}/{x}/{y}.png', { attribution: '地理院タイル', maxZoom: 15 });
         
@@ -323,17 +295,68 @@
         const damIcon = L.divIcon({ className: '', html: `<div class="dam-lbl">早明浦ダム<br><u style="color:#05f;">データを見る</u></div>`, iconSize:[120,45], iconAnchor:[60,22] });
         const damMarker = L.marker([33.75653, 133.55121], { icon: damIcon }).on('click', () => window.open('https://www1.river.go.jp/search/data-view/1368080700010/DA01?from=2026-10-30&to=2026-11-05', '_blank')).addTo(map);
 
-        // --- 5. パネルへの登録 ---
+
+        // ==========================================
+        // 【新規追加】登記所備付地図 (PMTiles)
+        // ==========================================
+        const pmtilesProtocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
+
+        const chisekiLayer = L.maplibreGL({
+            style: {
+                "version": 8,
+                "sources": {
+                    "chiseki-source": {
+                        "type": "vector",
+                        // ↓GitHubにアップロードしたファイル名（chiseki.pmtiles）と合わせる
+                        "url": "pmtiles://./chiseki.pmtiles" 
+                    }
+                },
+                "layers": [
+                    {
+                        "id": "chiseki-fill",
+                        "type": "fill",
+                        "source": "chiseki-source",
+                        // ↓【重要】QGISでWGS84変換時に付けたレイヤ名（ファイル名）を入れる
+                        // もし表示されない場合は、ここが合っていない可能性が高いです。
+                        "source-layer": "chiseki_wgs84", 
+                        "paint": {
+                            "fill-color": "#ffffcc",
+                            "fill-opacity": 0.3
+                        }
+                    },
+                    {
+                        "id": "chiseki-line",
+                        "type": "line",
+                        "source": "chiseki-source",
+                        "source-layer": "chiseki_wgs84", // ← 上と同じ名前
+                        "paint": {
+                            "line-color": "#ff0000",
+                            "line-width": 1
+                        }
+                    }
+                ]
+            },
+            interactive: true // 透過度変更(opacity)にも自動対応します
+        });
+
+
+        // --- 4. パネルへの登録（並び順） ---
         addCustomLayer(baseLayer, "標準地図", 'base');
         const googleSat = tile('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', '&copy; Google');
         addCustomLayer(googleSat, "Google 衛星画像", 'base');
 
         addCustomLayer(damMarker, "📌 早明浦ダム", 'overlay');
+        
+        // パネルに登記所地図を追加（初期状態はOFFになります）
+        addCustomLayer(chisekiLayer, "📝 登記所備付地図", 'overlay', { hasOpacity: true });
+        
         addCustomLayer(treeSpeciesLayer, "🌳 樹種ポリゴン", 'overlay', { hasOpacity: true, isTree: true, id: 'tree_layer' });
         addCustomLayer(slopeLayer, "傾斜量図 (カラー)", 'overlay', { hasOpacity: true, isSlope: true });
         addCustomLayer(csLayer, "高知県CS立体図", 'overlay', { hasOpacity: true });
 
-        // --- 6. GeoJSON読込 ---
+
+        // --- 5. GeoJSON読込 ---
         const loadJSON = file => {
             if (!file || !file.name.match(/\.(geo)?json$/i)) return alert("GeoJSONを指定してください。");
             const r = new FileReader();
@@ -350,7 +373,6 @@
             };
             r.readAsText(file);
         };
-
         document.getElementById('geo-input').onchange = e => { loadJSON(e.target.files[0]); e.target.value = ''; };
         const dl = document.getElementById('drop-layer');
         ['dragover', 'dragleave', 'drop'].forEach(ev => {
@@ -361,7 +383,7 @@
             });
         });
 
-        // --- 7. 基本操作イベント ---
+        // --- 6. 基本操作イベント ---
         map.on('click', e => {
             const pnl = document.getElementById('clc-panel');
             const tog = document.getElementById('clc-toggle');
